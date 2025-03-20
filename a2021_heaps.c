@@ -1,358 +1,190 @@
 /*
  * Name         : Your Name
  * Roll Number  : YourRollNumber
- * Assignment   : 8
+ * Assignment   : 7
  *
- * Description:
- *   This program implements a multi-heap (max-heap) in which each node stores up to p keys.
- *   The multi-heap is stored in a contiguous array of nodes. Except for possibly the last node,
- *   every node is full (contains exactly p keys). The heap-ordering property is maintained:
- *   for every key k in any node and every key k' in any of its child nodes, k > k'.
+ * Description: This program uses a min-heap (implemented as an array of triples)
+ *              to generate all sums of cubes a^3 + b^3 for a, b in [0, n] in sorted order.
+ *              Only pairs with a <= b are generated, ensuring that duplicate
+ *              representations such as (24,27) and (27,24) do not both appear.
  *
- *   The following functions are implemented:
- *     - initheap(p, nmax): Initializes an empty multi-heap with node capacity p and room for at most nmax keys.
- *     - insert(H, x): Inserts key x into the multi-heap H. If the insertion disturbs the ordering property,
- *                     it is repaired by "bubbling up" using the following rule:
- *                       Combine the keys of the current node (q) and its parent (r),
- *                       then assign the largest p keys to r and the rest to q.
- *     - findmax(H): Returns the maximum key from the root node (linear scan over up to p keys).
- *     - heapify(H, i): Repairs the heap–ordering property starting at node i by checking its child nodes.
- *     - delmax(H): Removes the maximum key from the root node. If the root is not the last node,
- *                  a key from the last node is moved to the root and then heapify is called.
- *     - prnheap(H): Prints the multi-heap, one node per line.
+ *              The heap is initially populated with triples (i, i, 2*i^3) for i = 0, 1, ... n.
+ *              Then, until the heap is empty, the minimum triple (a, b, a^3+b^3) is removed.
+ *              If b < n, the next triple (a, b+1, a^3+(b+1)^3) is inserted.
+ *              Every time a triple is removed, a check is performed to see if its sum matches
+ *              the previous triple's sum, which indicates a 2-way Ramanujan (taxicab) number.
+ *              When found, the number along with its two distinct pairs is printed.
  *
- *   The main() function reads the node capacity p and the total number n of keys.
- *   It then reads n keys into an array, inserts them one by one into the multi-heap, and prints the
- *   multi-heap. Next, it repeatedly finds and deletes the maximum key (storing the deletions in reverse
- *   order) until the heap is empty, and then prints the sorted array.
- *
- * Compile with: gcc -o multiheap multiheap.c -lm
+ * Compile with: gcc -o taxicab taxicab.c -lm
  */
 
  #include <stdio.h>
  #include <stdlib.h>
+ #include <math.h>
+ #include <limits.h>
  
- /* ---------------- Data Structures ---------------- */
- 
- /* Each node stores an array of keys and a count of keys currently in the node */
  typedef struct {
-     int *keys;   // dynamic array of keys (size = p)
-     int count;   // number of keys currently stored in this node
- } Node;
+     int a;
+     int b;
+     unsigned long long sum;  // key: a^3 + b^3
+ } Triple;
  
- /* The multi-heap structure */
  typedef struct {
-     Node *nodes; // array of nodes (the heap is stored in contiguous representation)
-     int p;       // node capacity (maximum keys per node)
-     int nmax;    // maximum number of keys that the heap can store
-     int n;       // current total number of keys in the heap
-     int N;       // current number of nodes used (always N = ceil(n/p))
- } MultiHeap;
+     Triple *arr;   // array of Triple
+     int size;      // current number of elements in the heap
+     int capacity;  // maximum capacity of the heap
+ } Heap;
  
- /* ---------------- Utility Function ---------------- */
+ /* Function prototypes */
+ Heap* buildHeap(int capacity);
+ void insert(Heap *heap, Triple t);
+ Triple removeMin(Heap *heap);
+ void heapifyUp(Heap *heap, int i);
+ void heapifyDown(Heap *heap, int i);
  
- /* Comparator for qsort in descending order */
- int cmp_desc(const void *a, const void *b) {
-     int ia = *(const int *)a;
-     int ib = *(const int *)b;
-     return ib - ia; // descending order
- }
- 
- /* ---------------- Multi-Heap Functions ---------------- */
- 
- /* initheap: Allocate and initialize a multi-heap with node capacity p and maximum nmax keys */
- MultiHeap* initheap(int p, int nmax) {
-     MultiHeap *H = (MultiHeap *) malloc(sizeof(MultiHeap));
-     if (!H) {
+ /* Build a new empty heap with the given capacity */
+ Heap* buildHeap(int capacity) {
+     Heap *heap = (Heap*) malloc(sizeof(Heap));
+     if (!heap) {
          fprintf(stderr, "Memory allocation error\n");
          exit(1);
      }
-     H->p = p;
-     H->nmax = nmax;
-     H->n = 0;
-     H->N = 0;
-     /* Maximum possible number of nodes = ceil(nmax / p) */
-     int maxNodes = (nmax + p - 1) / p;
-     H->nodes = (Node *) malloc(sizeof(Node) * maxNodes);
-     if (!H->nodes) {
+     heap->arr = (Triple*) malloc(sizeof(Triple) * capacity);
+     if (!heap->arr) {
          fprintf(stderr, "Memory allocation error\n");
          exit(1);
      }
-     for (int i = 0; i < maxNodes; i++) {
-         H->nodes[i].keys = (int *) malloc(sizeof(int) * p);
-         if (!H->nodes[i].keys) {
-             fprintf(stderr, "Memory allocation error\n");
-             exit(1);
-         }
-         H->nodes[i].count = 0;
-     }
-     return H;
+     heap->size = 0;
+     heap->capacity = capacity;
+     return heap;
  }
  
- /* insert: Insert key x into the multi-heap H */
- void insert(MultiHeap *H, int x) {
-     /* If no node exists yet, create the first node */
-     if (H->N == 0) {
-         H->N = 1;
-         H->nodes[0].count = 0;
-     }
-     int last = H->N - 1;
-     /* If the last node is full, start a new node */
-     if (H->nodes[last].count == H->p) {
-         H->N++;
-         last = H->N - 1;
-         H->nodes[last].count = 0;
-     }
-     /* Append x to the last node */
-     H->nodes[last].keys[H->nodes[last].count] = x;
-     H->nodes[last].count++;
-     H->n++;
- 
-     /* Repair the heap property by moving upward from node q */
-     int q = last;
-     while (q > 0) {
-         int r = (q - 1) / 2;  // parent index (using 0-based indexing)
-         /* Compute minimum key in parent node r */
-         int rmin = H->nodes[r].keys[0];
-         for (int i = 1; i < H->nodes[r].count; i++) {
-             if (H->nodes[r].keys[i] < rmin)
-                 rmin = H->nodes[r].keys[i];
-         }
-         /* Compute maximum key in current node q */
-         int qmax = H->nodes[q].keys[0];
-         for (int i = 1; i < H->nodes[q].count; i++) {
-             if (H->nodes[q].keys[i] > qmax)
-                 qmax = H->nodes[q].keys[i];
-         }
-         /* If parent's minimum is greater than child's maximum, heap property holds */
-         if (rmin > qmax)
+ /* Restore heap property upward from index i */
+ void heapifyUp(Heap *heap, int i) {
+     while (i > 0) {
+         int parent = (i - 1) / 2;
+         if (heap->arr[parent].sum > heap->arr[i].sum) {
+             Triple temp = heap->arr[parent];
+             heap->arr[parent] = heap->arr[i];
+             heap->arr[i] = temp;
+             i = parent;
+         } else {
              break;
-         /* Otherwise, combine keys from parent (r) and current node (q) */
-         int total = H->nodes[r].count + H->nodes[q].count;
-         int *temp = (int *) malloc(total * sizeof(int));
-         if (!temp) {
-             fprintf(stderr, "Memory allocation error\n");
-             exit(1);
          }
-         int idx = 0;
-         for (int i = 0; i < H->nodes[r].count; i++)
-             temp[idx++] = H->nodes[r].keys[i];
-         for (int i = 0; i < H->nodes[q].count; i++)
-             temp[idx++] = H->nodes[q].keys[i];
-         /* Sort combined keys in descending order */
-         qsort(temp, total, sizeof(int), cmp_desc);
-         /* Redistribute: parent gets the largest p keys; child gets the rest */
-         H->nodes[r].count = H->p;
-         for (int i = 0; i < H->p; i++)
-             H->nodes[r].keys[i] = temp[i];
-         H->nodes[q].count = total - H->p;
-         for (int i = 0; i < H->nodes[q].count; i++)
-             H->nodes[q].keys[i] = temp[H->p + i];
-         free(temp);
-         q = r;  // move upward
      }
  }
  
- /* findmax: Return the maximum key from the root node */
- int findmax(MultiHeap *H) {
-     if (H->n <= 0) {
-         fprintf(stderr, "Heap is empty\n");
+ /* Restore heap property downward from index i */
+ void heapifyDown(Heap *heap, int i) {
+     int left, right, smallest;
+     while ((left = 2*i + 1) < heap->size) {
+         smallest = i;
+         right = 2*i + 2;
+         if (heap->arr[left].sum < heap->arr[smallest].sum)
+             smallest = left;
+         if (right < heap->size && heap->arr[right].sum < heap->arr[smallest].sum)
+             smallest = right;
+         if (smallest != i) {
+             Triple temp = heap->arr[i];
+             heap->arr[i] = heap->arr[smallest];
+             heap->arr[smallest] = temp;
+             i = smallest;
+         } else {
+             break;
+         }
+     }
+ }
+ 
+ /* Insert a triple into the heap while maintaining the min-heap property */
+ void insert(Heap *heap, Triple t) {
+     if (heap->size >= heap->capacity) {
+         fprintf(stderr, "Heap overflow\n");
          exit(1);
      }
-     Node *root = &H->nodes[0];
-     int max = root->keys[0];
-     for (int i = 1; i < root->count; i++) {
-         if (root->keys[i] > max)
-             max = root->keys[i];
-     }
-     return max;
+     heap->arr[heap->size] = t;
+     heap->size++;
+     heapifyUp(heap, heap->size - 1);
  }
  
- /* heapify: Restore the heap property starting at node index i (used by delmax) */
- void heapify(MultiHeap *H, int i) {
-     while (1) {
-         /* Compute the minimum key in the current node i */
-         int qmin = H->nodes[i].keys[0];
-         for (int k = 1; k < H->nodes[i].count; k++) {
-             if (H->nodes[i].keys[k] < qmin)
-                 qmin = H->nodes[i].keys[k];
-         }
-         int child_index = -1;
-         int max_child_val = -1;
-         int left = 2 * i + 1;
-         if (left < H->N) {
-             int left_max = H->nodes[left].keys[0];
-             for (int k = 1; k < H->nodes[left].count; k++) {
-                 if (H->nodes[left].keys[k] > left_max)
-                     left_max = H->nodes[left].keys[k];
-             }
-             if (left_max > max_child_val) {
-                 max_child_val = left_max;
-                 child_index = left;
-             }
-         }
-         int right = 2 * i + 2;
-         if (right < H->N) {
-             int right_max = H->nodes[right].keys[0];
-             for (int k = 1; k < H->nodes[right].count; k++) {
-                 if (H->nodes[right].keys[k] > right_max)
-                     right_max = H->nodes[right].keys[k];
-             }
-             if (right_max > max_child_val) {
-                 max_child_val = right_max;
-                 child_index = right;
-             }
-         }
-         /* If no child exists or the current node’s minimum is larger than the maximum key in both children, stop */
-         if (child_index == -1 || qmin > max_child_val)
-             break;
-         /* Otherwise, combine keys of current node i and child node child_index */
-         int total = H->nodes[i].count + H->nodes[child_index].count;
-         int *temp = (int *) malloc(total * sizeof(int));
-         if (!temp) {
-             fprintf(stderr, "Memory allocation error\n");
-             exit(1);
-         }
-         int idx = 0;
-         for (int k = 0; k < H->nodes[i].count; k++)
-             temp[idx++] = H->nodes[i].keys[k];
-         for (int k = 0; k < H->nodes[child_index].count; k++)
-             temp[idx++] = H->nodes[child_index].keys[k];
-         qsort(temp, total, sizeof(int), cmp_desc);
-         /* Redistribute: node i gets the largest p keys (it must be full) */
-         H->nodes[i].count = H->p;
-         for (int k = 0; k < H->p; k++)
-             H->nodes[i].keys[k] = temp[k];
-         /* Child gets the remaining keys */
-         H->nodes[child_index].count = total - H->p;
-         for (int k = 0; k < H->nodes[child_index].count; k++)
-             H->nodes[child_index].keys[k] = temp[H->p + k];
-         free(temp);
-         i = child_index; // continue heapifying downward
-     }
- }
- 
- /* delmax: Delete the maximum key from the heap (from the root) */
- void delmax(MultiHeap *H) {
-     if (H->n <= 0) {
-         fprintf(stderr, "Heap is empty\n");
+ /* Remove and return the triple with the minimum sum from the heap */
+ Triple removeMin(Heap *heap) {
+     if (heap->size <= 0) {
+         fprintf(stderr, "Heap underflow\n");
          exit(1);
      }
-     Node *root = &H->nodes[0];
-     /* Find index of maximum key in root node */
-     int max_index = 0;
-     int max_val = root->keys[0];
-     for (int i = 1; i < root->count; i++) {
-         if (root->keys[i] > max_val) {
-             max_val = root->keys[i];
-             max_index = i;
-         }
-     }
-     /* Remove the maximum key by replacing it with the last key in the root node */
-     root->keys[max_index] = root->keys[root->count - 1];
-     root->count--;
-     H->n--;
-     
-     /* If the heap becomes empty, we are done */
-     if (H->n == 0)
-         return;
-     
-     /* If the root is not the only node, take a key from the last node and move it to the root */
-     if (H->N > 1) {
-         int last = H->N - 1;
-         Node *lastNode = &H->nodes[last];
-         int tempKey = lastNode->keys[lastNode->count - 1];
-         lastNode->count--;
-         if (lastNode->count == 0)
-             H->N--;  // remove the last node if it becomes empty
-         /* Place the key from the last node into the root */
-         root->keys[root->count] = tempKey;
-         root->count++;
-         /* Restore the heap property starting from the root */
-         heapify(H, 0);
-     }
+     Triple min = heap->arr[0];
+     heap->arr[0] = heap->arr[heap->size - 1];
+     heap->size--;
+     heapifyDown(heap, 0);
+     return min;
  }
- 
- /* prnheap: Print the multi-heap node by node */
- void prnheap(MultiHeap *H) {
-     for (int i = 0; i < H->N; i++) {
-         printf("[ ");
-         for (int j = 0; j < H->nodes[i].count; j++)
-             printf("%d ", H->nodes[i].keys[j]);
-         printf("]\n");
-     }
- }
- 
- /* ---------------- Main Function ---------------- */
  
  int main() {
-     int p, n;
-     printf("Enter node capacity (p): ");
-     if (scanf("%d", &p) != 1 || p <= 0) {
-         fprintf(stderr, "Invalid node capacity\n");
-         return 1;
-     }
-     printf("Enter total number of keys to be inserted: ");
-     if (scanf("%d", &n) != 1 || n < 0) {
-         fprintf(stderr, "Invalid number of keys\n");
+     unsigned long long M;
+     printf("Enter M: ");
+     if (scanf("%llu", &M) != 1) {
+         fprintf(stderr, "Invalid input\n");
          return 1;
      }
      
-     /* Read the keys into an array A */
-     int *A = (int *) malloc(n * sizeof(int));
-     if (!A) {
-         fprintf(stderr, "Memory allocation error\n");
-         return 1;
+     /* Determine n = floor(cuberoot(M)).
+        We want to generate pairs (a, b) with a, b in [0, n].
+        (Some generated sums may exceed M; we stop processing when that happens.)
+     */
+     double d = cbrt((double) M);
+     int n = (int) d;
+     if (((unsigned long long)(n+1) * (n+1) * (n+1)) <= M)
+         n++;
+     
+     /* Build a min-heap with capacity (n+1), ensuring O(n) space. */
+     Heap *heap = buildHeap(n + 1);
+     // Insert only pairs (i, i) to ensure a <= b.
+     for (int i = 0; i <= n; i++) {
+         Triple t;
+         t.a = i;
+         t.b = i;
+         t.sum = (unsigned long long)i * i * i + (unsigned long long)i * i * i;  // 2 * i^3
+         insert(heap, t);
      }
-     printf("Enter %d keys (space separated):\n", n);
-     for (int i = 0; i < n; i++) {
-         if (scanf("%d", &A[i]) != 1) {
-             fprintf(stderr, "Invalid key input\n");
-             free(A);
-             return 1;
+     
+     // Variables to track previous removed triple for duplicate-sum check.
+     Triple prev;
+     int first = 1;
+     unsigned long long lastPrinted = ULLONG_MAX; // sentinel: no taxicab number printed yet
+     
+     /* Process triples in increasing order of sum */
+     while (heap->size > 0) {
+         Triple t = removeMin(heap);
+         
+         // If current sum exceeds M, we are done.
+         if (t.sum > M)
+             break;
+         
+         // Check if this sum matches the previous triple's sum.
+         // Since pairs are generated in canonical order (a <= b),
+         // we avoid printing duplicate unordered pairs.
+         if (!first && t.sum == prev.sum && t.sum != lastPrinted) {
+             printf("%llu ( %d,%d) ( %d,%d)\n", t.sum, prev.a, prev.b, t.a, t.b);
+             lastPrinted = t.sum;
+         }
+         
+         prev = t;
+         first = 0;
+         
+         // Generate the next triple for the same 'a', if possible.
+         if (t.b < n) {
+             Triple t2;
+             t2.a = t.a;
+             t2.b = t.b + 1;
+             t2.sum = (unsigned long long)t.a * t.a * t.a + (unsigned long long)(t.b + 1) * (t.b + 1) * (t.b + 1);
+             insert(heap, t2);
          }
      }
      
-     /* Initialize the multi-heap with maximum capacity n */
-     MultiHeap *H = initheap(p, n);
-     
-     /* Insert the keys one by one */
-     for (int i = 0; i < n; i++) {
-         insert(H, A[i]);
-     }
-     printf("\n+++ %d insertions made\n\n", n);
-     /* Print the multi-heap after all insertions */
-     prnheap(H);
-     
-     /* Delete keys one by one using delmax, storing them in array A in reverse order */
-     int *sorted = (int *) malloc(n * sizeof(int));
-     if (!sorted) {
-         fprintf(stderr, "Memory allocation error\n");
-         return 1;
-     }
-     int index = n - 1;
-     while (H->n > 0) {
-         sorted[index--] = findmax(H);
-         delmax(H);
-     }
-     printf("\n+++ %d deletions made\n", n);
-     printf("\n+++ Input array sorted\n\n");
-     /* Print the sorted array (ascending order) */
-     for (int i = 0; i < n; i++) {
-         printf("%d ", sorted[i]);
-     }
-     printf("\n");
-     
-     /* Free allocated memory */
-     free(sorted);
-     free(A);
-     /* Free each node's key array and the nodes array */
-     int maxNodes = (H->nmax + p - 1) / p;
-     for (int i = 0; i < maxNodes; i++) {
-         free(H->nodes[i].keys);
-     }
-     free(H->nodes);
-     free(H);
+     // Free allocated memory
+     free(heap->arr);
+     free(heap);
      
      return 0;
- } 
+ }
+ 
