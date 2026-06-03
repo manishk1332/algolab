@@ -1,4 +1,4 @@
-# Summary
+# Knowledge Base
 
 Most AI workflows repeatedly solve the same problem:
 
