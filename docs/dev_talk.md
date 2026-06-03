@@ -61,7 +61,7 @@ LLM attention mechanisms suffer from **quadratic performance degradation** with 
 - Lose track of the core objective
 - Generate generic, wrong solutions
 
-This happens *silently*—the AI will confidently output plausible-but-incorrect code.
+This happens *silently*, the AI will confidently output plausible-but-incorrect code.
 
 #### Why It Matters
 
